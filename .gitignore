@@ -181,3 +181,4 @@ cython_debug/
 .cursorindexingignore
 /wikitext-103-old
 /wikitext-103
+/save-data
