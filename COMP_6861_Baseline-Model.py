@@ -25,7 +25,6 @@ def save_model_checkpoint(epoch, model, optimizer, scheduler, loss, best_valid_l
 
     torch.save(checkpoint, baseline_file_path + save_file_name)
 
-
 class WikitextDataset(Dataset):
     def __init__(self, file_path, block_size):
         # We need to start by loading data into CPU. We only move to GPU once batches are ready.
@@ -43,7 +42,7 @@ class WikitextDataset(Dataset):
         return chunk, target
 
 class BaselineDecoderModel(nn.Module):
-    def __init__(self, tokenizer, block_size, d_key_value=64, nhead=6, n_layers=6, dropout=0.1, dim_feedforward_scalar=4):
+    def __init__(self, tokenizer, block_size, d_key_value, nhead, n_layers, dropout, dim_feedforward_scalar, label_smoothing):
         super().__init__()
 
         # It must be possible to divide d_model by nhead, so I figured it would be best to create the d_model within the __init__.
@@ -72,7 +71,7 @@ class BaselineDecoderModel(nn.Module):
         self.layer_norm = nn.LayerNorm(d_model)
         self.linear_prediction_layer = nn.Linear(d_model, vocab_size)
 
-        self.criterion = nn.CrossEntropyLoss(ignore_index=self.padding_index, label_smoothing=0.1)
+        self.criterion = nn.CrossEntropyLoss(ignore_index=self.padding_index, label_smoothing=label_smoothing)
         mask = torch.triu(torch.ones(block_size, block_size), diagonal=1).bool()
         self.register_buffer('causal_mask', mask)
 
@@ -92,9 +91,7 @@ class BaselineDecoderModel(nn.Module):
                 tgt=x,
                 memory=x,
                 tgt_mask=current_mask,
-                memory_mask=current_mask,
-                tgt_is_causal=True,
-                memory_is_causal=True
+                tgt_is_causal=True
             )
         
         x = self.layer_norm(x)
@@ -102,7 +99,7 @@ class BaselineDecoderModel(nn.Module):
 
         return logits
 
-def train_epoch(model, dataloader, optimizer, scheduler, device, accumulation_steps):
+def train_epoch(model, dataloader, optimizer, scheduler, accumulation_steps, device):
     model.train()
     total_loss = 0.0
 
@@ -169,17 +166,17 @@ def eval_model(
     return total_loss / len(dataloader)
 
 # This is the main code. Sets up the baseline model.
-def train_full_model(tokenizer):
+def train_full_model(tokenizer, 
+                     batch_size=16, block_size=256, accumulation_steps=8, warmup_pct_start=0.1, 
+                     lr=1e-3, weight_decay=0.01,
+                     d_key_value=64, nhead=6, n_layers=6, dropout=0.1, dim_feedforward_scalar=4,
+                     label_smoothing=0.1):
     # Setup before initializing the model
+    start_time = time.time()
     random.seed(0)
     torch.manual_seed(0)
 
-    batch_size = 16
-    block_size = 256
-    accumulation_steps = 8
-
     num_epochs = 10
-    warmup_pct_start = 0.1
 
     train_dataset = WikitextDataset(train_data_file_path, block_size)
     valid_dataset = WikitextDataset(valid_data_file_path, block_size)
@@ -203,9 +200,11 @@ def train_full_model(tokenizer):
     )
 
     # Model initialization
-    model = BaselineDecoderModel(tokenizer, block_size)
+    model = BaselineDecoderModel(tokenizer, block_size, 
+                                 d_key_value, nhead, n_layers, dropout, dim_feedforward_scalar,
+                                 label_smoothing)
     model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.01)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
     # Due to gradient accumulation, we don't call optimizer.step on every loop.
     # This is how many times we will *actually* call optimizer.step.
@@ -213,7 +212,7 @@ def train_full_model(tokenizer):
 
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
         optimizer,
-        max_lr=5e-4,
+        max_lr=lr,
         total_steps=total_effective_steps,
         pct_start=warmup_pct_start
     )
@@ -224,7 +223,7 @@ def train_full_model(tokenizer):
     best_valid_loss = float('inf')
     try:
         for epoch in range(1, num_epochs + 1):
-            epoch_training_loss = train_epoch(model, train_loader, optimizer, scheduler, device, accumulation_steps)
+            epoch_training_loss = train_epoch(model, train_loader, optimizer, scheduler, accumulation_steps, device)
             epoch_valid_loss = eval_model(model, valid_loader, device)
             print(f"Epoch {epoch} | Training loss: {epoch_training_loss} | Valid loss: {epoch_valid_loss}")
 
@@ -238,7 +237,10 @@ def train_full_model(tokenizer):
 
         test_loss = eval_model(model, test_loader, device)
         print(f"Final Test Loss: {test_loss}")
-        torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss}, baseline_file_path + f"Losses.pt")
+        end_time = time.time()
+        total_duration = end_time - start_time
+        print(f"Total Training Time: {total_duration / 3600:.2f} hours.")
+        torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, baseline_file_path + f"Losses.pt")
     except:
         if training_losses:
             save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"Crash-Checkpoint.pt")
