@@ -37,7 +37,7 @@ def save_model_checkpoint(epoch, model, optimizer, scheduler, loss, best_valid_l
 
     torch.save(checkpoint, baseline_file_path + save_file_name)
 
-def get_reduced_dataset(full_dataset, subset_ratio=0.02):
+def get_reduced_dataset(full_dataset, subset_ratio=0.01):
     subset_size = int(len(full_dataset) * subset_ratio)
     indices = np.arange(len(full_dataset))
     rng = np.random.default_rng(42)
@@ -337,8 +337,8 @@ if __name__ == "__main__":
     if args.tune:
         level = min(args.tune, 3)
         print(f"Testing hyperparameter combinations at level {level}...")
-        # Train on 2% of the dataset.
-        train_dataset = get_reduced_dataset(train_dataset, 0.02)
+        # Train on 1% of the dataset.
+        train_dataset = get_reduced_dataset(train_dataset, 0.01)
         num_epochs = 5
 
         study = optuna.create_study(direction="minimize",
