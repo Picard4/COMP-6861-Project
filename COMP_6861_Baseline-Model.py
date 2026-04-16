@@ -165,10 +165,9 @@ def eval_model(
 # Block size must be adjusted on its own (since splitting the dataset is determined by block_size), so this project will omit tuning it.
 # batch_size and accumulation_steps must go as high as my hardware will allow them to go (no tuning will be done for them as a result).
 def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, block_size=256, num_epochs=10,
-                    n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4, # L1 Hyperparameters
-                    lr=5e-4, warmup_pct_start=0.1,                                 # L2 Hyperparameters
-                    dropout=0.1, weight_decay=0.01, label_smoothing=0.1,           # L3 Hyperparameters
-                    batch_size=16, accumulation_steps=8):          # Pre-determined hyperparameters (no tuning done)
+                    n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4, lr=5e-4,    # L1 Hyperparameters
+                    warmup_pct_start=0.1, dropout=0.1, weight_decay=0.01, label_smoothing=0.1, # L2 Hyperparameters
+                    batch_size=16, accumulation_steps=8, trial=None):  # Pre-determined hyperparameters (no tuning done) and the trial for tuning.
     # Setup before initializing the model
     start_time = time.time()
     random.seed(0)
@@ -229,7 +228,10 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
                     save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"BestModel.pt")
             elif test_dataset:
                 save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"Checkpoint.pt")
-        
+            if trial is not None:
+                trial.report(epoch_valid_loss, epoch)
+                if trial.should_prune():
+                    raise optuna.TrialPruned()
         if test_dataset:
             test_loss = eval_model(model, test_loader, device)
             print(f"Final Test Loss: {test_loss}", flush=True)
@@ -237,6 +239,8 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
             total_duration = end_time - start_time
             print(f"Total Training Time: {total_duration / 3600:.2f} hours.", flush=True)
             torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, BASELINE_FILE_PATH + f"Losses.pt")
+    except optuna.TrialPruned:
+        raise
     except Exception as e:
         print(f"Exception thrown: {e}", file=sys.stderr, flush=True)
         if training_losses:
@@ -252,6 +256,7 @@ def hyperparameter_tuning_objective_l1(trial, tokenizer, block_size, num_epochs,
     d_key_value = trial.suggest_categorical("d_key_value", [32, 64, 128])
     nhead = trial.suggest_categorical("nhead", [4, 8, 12])
     dim_feedforward_scalar = trial.suggest_int("dim_feedforward_scalar", 2, 4)
+    lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
 
     # These two hyperparameters make up the d_model.
     # If it's too high, my training will crash!
@@ -259,28 +264,20 @@ def hyperparameter_tuning_objective_l1(trial, tokenizer, block_size, num_epochs,
         raise optuna.exceptions.TrialPruned()
 
     validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, block_size, num_epochs,
-                                       n_layers=n_layers, d_key_value=d_key_value, nhead=nhead, dim_feedforward_scalar=dim_feedforward_scalar)
+                                       n_layers=n_layers, d_key_value=d_key_value, nhead=nhead, dim_feedforward_scalar=dim_feedforward_scalar, lr=lr,
+                                       trial=trial)
     return validation_loss
-
 
 def hyperparameter_tuning_objective_l2(trial, tokenizer, block_size, num_epochs, train_dataset, valid_dataset, device):
-    lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
     warmup_pct_start = trial.suggest_float("warmup_pct_start", 0.05, 0.3)
-
-    validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, block_size, num_epochs,
-                                       n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4,
-                                       lr=lr, warmup_pct_start=warmup_pct_start)
-    return validation_loss
-
-def hyperparameter_tuning_objective_l3(trial, tokenizer, block_size, num_epochs, train_dataset, valid_dataset, device):
     dropout = trial.suggest_float("dropout", 0.05, 0.4)
     weight_decay = trial.suggest_float("weight_decay", 1e-4, 0.3, log=True)
     label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.2)
 
     validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, block_size, num_epochs,
-                                       n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4,
-                                       lr=5e-4, warmup_pct_start=0.1,
-                                       dropout=dropout, weight_decay=weight_decay, label_smoothing=label_smoothing)
+                                       n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4, lr=5e-4, 
+                                       warmup_pct_start=warmup_pct_start, dropout=dropout, weight_decay=weight_decay, label_smoothing=label_smoothing
+                                       trial=trial)
     return validation_loss
 
 if __name__ == "__main__":
@@ -307,31 +304,27 @@ if __name__ == "__main__":
 
     args = get_args()
     if args.tune:
-        level = min(args.tune, 3)
+        level = min(args.tune, 2)
         print(f"Testing hyperparameter combinations at level {level}...", flush=True)
         # Train on 1% of the dataset.
         train_dataset = get_reduced_dataset(train_dataset, 0.01)
-        num_epochs = 5
 
+        pruner = optuna.pruners.MedianPruner(n_startup_trials=4, n_warmup_steps=0)
         study = optuna.create_study(direction="minimize",
                                     sampler=TPESampler(seed=42),
                                     study_name=f"Wikitext_Level_{level}",
                                     storage="sqlite:///tuning_history.db",
-                                    load_if_exists=True)
+                                    load_if_exists=True,
+                                    pruner=pruner)
         if args.tune == 1:
             study.optimize(
-                lambda trial: hyperparameter_tuning_objective_l1(trial, tokenizer, block_size, num_epochs, train_dataset, valid_dataset, device), 
-                n_trials=10
-            )
-        elif args.tune == 2:
-            study.optimize(
-                lambda trial: hyperparameter_tuning_objective_l2(trial, tokenizer, block_size, num_epochs, train_dataset, valid_dataset, device), 
-                n_trials=20
+                lambda trial: hyperparameter_tuning_objective_l1(trial, tokenizer, block_size, 2, train_dataset, valid_dataset, device), 
+                n_trials=25
             )
         else:
             study.optimize(
-                lambda trial: hyperparameter_tuning_objective_l3(trial, tokenizer, block_size, num_epochs, train_dataset, valid_dataset, device), 
-                n_trials=20
+                lambda trial: hyperparameter_tuning_objective_l2(trial, tokenizer, block_size, 3, train_dataset, valid_dataset, device), 
+                n_trials=10
             )
         print(f"Best Hyperparameters: {study.best_params}", flush=True)
     else:
