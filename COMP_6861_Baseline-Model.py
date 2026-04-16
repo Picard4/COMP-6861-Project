@@ -4,6 +4,7 @@ import time
 import torch
 import torch.nn as nn
 import numpy as np
+import optuna
 from torch.utils.data import Dataset, DataLoader, Subset
 from transformers import PreTrainedTokenizerFast
 
@@ -18,7 +19,7 @@ baseline_file_path = data_file_path + "baseline-models/"
 def get_args():
     parser = argparse.ArgumentParser()
     
-    parser.add_argument("--tune", action="store_true", help="Activate hyperparameter tuning mode")
+    parser.add_argument("--tune", type=int, default=0, help="Hyperparameter tuning mode level (0 means no tuning)")
     
     return parser.parse_args()
 
@@ -183,9 +184,10 @@ def eval_model(
 # This is the main code. Sets up the baseline model.
 # Datasets are assumed to use the same block_size as the datasets that are sent in.
 # Send in None for the test_dataset to indicate that this training is for hyperparameter tuning.
-def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, block_size=256, model_name="", num_epochs=10,
-                     warmup_pct_start=0.1, lr=1e-3, weight_decay=0.01, label_smoothing=0.1, # Hyperparameters outside the model
-                     d_key_value=64, nhead=6, n_layers=6, dropout=0.1, dim_feedforward_scalar=4): # Hyperparameters inside the model
+def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, block_size=256, num_epochs=10,
+                    n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4, # L1 Hyperparameters
+                    lr=5e-4, warmup_pct_start=0.1,                                 # L2 Hyperparameters
+                    dropout=0.1, weight_decay=0.01, label_smoothing=0.1):          # L3 Hyperparameters
     # Setup before initializing the model
     start_time = time.time()
     random.seed(0)
@@ -248,21 +250,23 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, bloc
             valid_losses.append(epoch_valid_loss)
             if (epoch_valid_loss < best_valid_loss):
                 best_valid_loss = epoch_valid_loss
-                save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"BestModel-{model_name}.pt")
-            else:
-                save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"Checkpoint-{model_name}.pt")
+                if test_dataset:
+                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"BestModel.pt")
+            elif test_dataset:
+                save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"Checkpoint.pt")
+        
         if test_dataset:
             test_loss = eval_model(model, test_loader, device)
             print(f"Final Test Loss: {test_loss}")
             end_time = time.time()
             total_duration = end_time - start_time
             print(f"Total Training Time: {total_duration / 3600:.2f} hours.")
-            torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, baseline_file_path + f"Losses-{model_name}.pt")
+            torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, baseline_file_path + f"Losses.pt")
     except Exception as e:
         print(f"Exception thrown: {e}")
         if training_losses:
-            save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"Crash-Checkpoint-{model_name}.pt")
-            torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, baseline_file_path + f"Losses-{model_name}.pt")
+            save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"Crash-Checkpoint.pt")
+            torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, baseline_file_path + f"Losses.pt")
     finally:
         torch.cuda.empty_cache()
     # To help with hyperparameter tuning
@@ -283,6 +287,7 @@ if __name__ == "__main__":
     })
 
     # Block size must be adjusted on its own, if at all, since splitting the dataset is determined by block_size
+    # 512 may be an alternative to consider...
     block_size=256
 
     # Prepare the datasets
@@ -292,9 +297,11 @@ if __name__ == "__main__":
 
     args = get_args()
     if args.tune:
-        print("Testing hyperparameter combinations...")
+        print(f"Testing hyperparameter combinations... at level {args.tune}")
         train_dataset = get_reduced_dataset(train_dataset, 0.05)
+
+        
     else:
         print("Training model...")
-        train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, block_size, "Final"
+        train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, block_size, 10
                          )
