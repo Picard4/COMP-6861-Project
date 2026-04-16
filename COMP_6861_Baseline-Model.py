@@ -7,16 +7,9 @@ import torch.nn as nn
 import numpy as np
 import optuna
 from optuna.samplers import TPESampler
-from torch.utils.data import Dataset, DataLoader, Subset
+from torch.utils.data import Dataset, DataLoader
 from transformers import PreTrainedTokenizerFast
-
-# File constants
-data_file_path = "save-data/"
-tokenizer_file_path = data_file_path + "wikitext-tokenizer.json"
-train_data_file_path = data_file_path + "train-dataset-tokens.pt"
-valid_data_file_path = data_file_path + "valid-dataset-tokens.pt"
-test_data_file_path = data_file_path + "test-dataset-tokens.pt"
-baseline_file_path = data_file_path + "baseline-models/"
+from utils import save_model_checkpoint, get_reduced_dataset, TOKENIZER_FILE_PATH, TRAIN_DATA_FILE_PATH, VALID_DATA_FILE_PATH, TEST_DATA_FILE_PATH, BASELINE_FILE_PATH
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -24,27 +17,6 @@ def get_args():
     parser.add_argument("--tune", type=int, default=0, help="Hyperparameter tuning mode level (0 means no tuning)")
     
     return parser.parse_args()
-
-def save_model_checkpoint(epoch, model, optimizer, scheduler, loss, best_valid_loss, save_file_name):
-    checkpoint = {
-        "epoch": epoch,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "scheduler_state_dict": scheduler.state_dict(),
-        "loss": loss,
-        "best_valid_loss": best_valid_loss
-    }
-
-    torch.save(checkpoint, baseline_file_path + save_file_name)
-
-def get_reduced_dataset(full_dataset, subset_ratio=0.01):
-    subset_size = int(len(full_dataset) * subset_ratio)
-    indices = np.arange(len(full_dataset))
-    rng = np.random.default_rng(42)
-    rng.shuffle(indices)
-
-    subset_indices = indices[:subset_size]
-    return Subset(full_dataset, subset_indices)
 
 class WikitextDataset(Dataset):
     def __init__(self, file_path, block_size):
@@ -247,29 +219,29 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
         for epoch in range(1, num_epochs + 1):
             epoch_training_loss = train_epoch(model, train_loader, optimizer, scheduler, accumulation_steps, device)
             epoch_valid_loss = eval_model(model, valid_loader, device)
-            print(f"Epoch {epoch} | Training loss: {epoch_training_loss} | Valid loss: {epoch_valid_loss}")
+            print(f"Epoch {epoch} | Training loss: {epoch_training_loss} | Valid loss: {epoch_valid_loss}", flush=True)
 
             training_losses.append(epoch_training_loss)
             valid_losses.append(epoch_valid_loss)
             if (epoch_valid_loss < best_valid_loss):
                 best_valid_loss = epoch_valid_loss
                 if test_dataset:
-                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"BestModel.pt")
+                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"BestModel.pt")
             elif test_dataset:
-                save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"Checkpoint.pt")
+                save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"Checkpoint.pt")
         
         if test_dataset:
             test_loss = eval_model(model, test_loader, device)
-            print(f"Final Test Loss: {test_loss}")
+            print(f"Final Test Loss: {test_loss}", flush=True)
             end_time = time.time()
             total_duration = end_time - start_time
-            print(f"Total Training Time: {total_duration / 3600:.2f} hours.")
-            torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, baseline_file_path + f"Losses.pt")
+            print(f"Total Training Time: {total_duration / 3600:.2f} hours.", flush=True)
+            torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, BASELINE_FILE_PATH + f"Losses.pt")
     except Exception as e:
-        print(f"Exception thrown: {e}")
+        print(f"Exception thrown: {e}", file=sys.stderr, flush=True)
         if training_losses:
-            save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"Crash-Checkpoint.pt")
-            torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, baseline_file_path + f"Losses.pt")
+            save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"Crash-Checkpoint.pt")
+            torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, BASELINE_FILE_PATH + f"Losses.pt")
     finally:
         torch.cuda.empty_cache()
     # To help with hyperparameter tuning
@@ -313,9 +285,9 @@ def hyperparameter_tuning_objective_l3(trial, tokenizer, block_size, num_epochs,
 
 if __name__ == "__main__":
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+    print(f"Using device: {device}", flush=True)
 
-    tokenizer = PreTrainedTokenizerFast(tokenizer_file=tokenizer_file_path)
+    tokenizer = PreTrainedTokenizerFast(tokenizer_file=TOKENIZER_FILE_PATH)
 
     # We need to ensure the tokenizer knows what the special tokens mean.
     tokenizer.add_special_tokens({
@@ -330,13 +302,13 @@ if __name__ == "__main__":
     block_size=256
 
     # Prepare the datasets
-    train_dataset = WikitextDataset(train_data_file_path, block_size)
-    valid_dataset = WikitextDataset(valid_data_file_path, block_size)
+    train_dataset = WikitextDataset(TRAIN_DATA_FILE_PATH, block_size)
+    valid_dataset = WikitextDataset(VALID_DATA_FILE_PATH, block_size)
 
     args = get_args()
     if args.tune:
         level = min(args.tune, 3)
-        print(f"Testing hyperparameter combinations at level {level}...")
+        print(f"Testing hyperparameter combinations at level {level}...", flush=True)
         # Train on 1% of the dataset.
         train_dataset = get_reduced_dataset(train_dataset, 0.01)
         num_epochs = 5
@@ -361,9 +333,9 @@ if __name__ == "__main__":
                 lambda trial: hyperparameter_tuning_objective_l3(trial, tokenizer, block_size, num_epochs, train_dataset, valid_dataset, device), 
                 n_trials=20
             )
-        print("Best Hyperparameters:", study.best_params)
+        print(f"Best Hyperparameters: {study.best_params}", flush=True)
     else:
-        print("Training model...")
-        test_dataset = WikitextDataset(test_data_file_path, block_size)
+        print("Training model...", flush=True)
+        test_dataset = WikitextDataset(TEST_DATA_FILE_PATH, block_size)
         train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, block_size, 10
                          )
