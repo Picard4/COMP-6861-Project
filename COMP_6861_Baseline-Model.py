@@ -276,7 +276,7 @@ def hyperparameter_tuning_objective_l2(trial, tokenizer, block_size, num_epochs,
 
     validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, block_size, num_epochs,
                                        n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4, lr=5e-4, 
-                                       warmup_pct_start=warmup_pct_start, dropout=dropout, weight_decay=weight_decay, label_smoothing=label_smoothing
+                                       warmup_pct_start=warmup_pct_start, dropout=dropout, weight_decay=weight_decay, label_smoothing=label_smoothing,
                                        trial=trial)
     return validation_loss
 
