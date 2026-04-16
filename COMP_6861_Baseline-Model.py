@@ -1,4 +1,5 @@
 import argparse
+import sys
 import random
 import time
 import torch
@@ -156,8 +157,8 @@ def train_epoch(model, dataloader, optimizer, scheduler, accumulation_steps, dev
         if (i + 1) % 10 == 0:
             time.sleep(0.1)
             # To ensure that training is still working...
-            if (i + 1) % 50 == 0:
-                print(f"Batch {i+1}/{len(dataloader)}...", flush=True)
+            if (i + 1) % 500 == 0:
+                print(f"Batch {i+1}/{len(dataloader)}...", file=sys.stderr, flush=True)
 
     return total_loss / len(dataloader)
 
