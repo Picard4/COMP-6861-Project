@@ -1,17 +1,26 @@
+import argparse
 import random
 import time
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
+import numpy as np
+from torch.utils.data import Dataset, DataLoader, Subset
 from transformers import PreTrainedTokenizerFast
 
 # File constants
 data_file_path = "save-data/"
 tokenizer_file_path = data_file_path + "wikitext-tokenizer.json"
-train_data_file_path = data_file_path + "train-reduced-dataset-tokens.pt"
+train_data_file_path = data_file_path + "train-dataset-tokens.pt"
 valid_data_file_path = data_file_path + "valid-dataset-tokens.pt"
 test_data_file_path = data_file_path + "test-dataset-tokens.pt"
 baseline_file_path = data_file_path + "baseline-models/"
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    
+    parser.add_argument("--tune", action="store_true", help="Activate hyperparameter tuning mode")
+    
+    return parser.parse_args()
 
 def save_model_checkpoint(epoch, model, optimizer, scheduler, loss, best_valid_loss, save_file_name):
     checkpoint = {
@@ -24,6 +33,15 @@ def save_model_checkpoint(epoch, model, optimizer, scheduler, loss, best_valid_l
     }
 
     torch.save(checkpoint, baseline_file_path + save_file_name)
+
+def get_reduced_dataset(full_dataset, subset_ratio=0.05):
+    subset_size = int(len(full_dataset) * subset_ratio)
+    indices = np.arange(len(full_dataset))
+    rng = np.random.default_rng(42)
+    rng.shuffle(indices)
+
+    subset_indices = indices[:subset_size]
+    return Subset(full_dataset, subset_indices)
 
 class WikitextDataset(Dataset):
     def __init__(self, file_path, block_size):
@@ -58,7 +76,7 @@ class BaselineDecoderModel(nn.Module):
         self.dropout = nn.Dropout(p=dropout)
 
         self.transformer_blocks = nn.ModuleList([
-            nn.TransformerDecoderLayer(
+            nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
             dropout=dropout,
@@ -88,10 +106,9 @@ class BaselineDecoderModel(nn.Module):
 
         for block in self.transformer_blocks:
             x = block(
-                tgt=x,
-                memory=x,
-                tgt_mask=current_mask,
-                tgt_is_causal=True
+                src=x,
+                src_mask=current_mask,
+                is_causal=True
             )
         
         x = self.layer_norm(x)
@@ -104,9 +121,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, accumulation_steps, dev
     total_loss = 0.0
 
     for i, batch in enumerate(dataloader):
-        full_sequence = batch[0].to(device)
-        x = full_sequence[:, :-1]
-        y = full_sequence[:, 1:]
+        x, y = batch[0].to(device), batch[1].to(device)
 
         # Use mixed-precision training to save some time!
         with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16):
@@ -166,21 +181,21 @@ def eval_model(
     return total_loss / len(dataloader)
 
 # This is the main code. Sets up the baseline model.
-def train_full_model(tokenizer, 
-                     batch_size=16, block_size=256, accumulation_steps=8, warmup_pct_start=0.1, 
-                     lr=1e-3, weight_decay=0.01,
-                     d_key_value=64, nhead=6, n_layers=6, dropout=0.1, dim_feedforward_scalar=4,
-                     label_smoothing=0.1):
+# Datasets are assumed to use the same block_size as the datasets that are sent in.
+# Send in None for the test_dataset to indicate that this training is for hyperparameter tuning.
+def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, block_size=256, model_name="", num_epochs=10,
+                     warmup_pct_start=0.1, lr=1e-3, weight_decay=0.01, label_smoothing=0.1, # Hyperparameters outside the model
+                     d_key_value=64, nhead=6, n_layers=6, dropout=0.1, dim_feedforward_scalar=4): # Hyperparameters inside the model
     # Setup before initializing the model
     start_time = time.time()
     random.seed(0)
     torch.manual_seed(0)
 
-    num_epochs = 10
-
-    train_dataset = WikitextDataset(train_data_file_path, block_size)
-    valid_dataset = WikitextDataset(valid_data_file_path, block_size)
-    test_dataset = WikitextDataset(test_data_file_path, block_size)
+    # Constants
+    # Block size must be adjusted on its own (since splitting the dataset is determined by block_size)
+    # batch_size and accumulation_steps must go as high as my hardware will allow them to go.
+    batch_size = 16
+    accumulation_steps = 8
 
     train_loader = DataLoader(
         train_dataset,
@@ -194,10 +209,12 @@ def train_full_model(tokenizer,
         valid_dataset,
         batch_size=batch_size
     )
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=batch_size
-    )
+
+    if test_dataset:
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size
+        )
 
     # Model initialization
     model = BaselineDecoderModel(tokenizer, block_size, 
@@ -231,22 +248,25 @@ def train_full_model(tokenizer,
             valid_losses.append(epoch_valid_loss)
             if (epoch_valid_loss < best_valid_loss):
                 best_valid_loss = epoch_valid_loss
-                save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"BestModel.pt")
+                save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"BestModel-{model_name}.pt")
             else:
-                save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"Checkpoint.pt")
-
-        test_loss = eval_model(model, test_loader, device)
-        print(f"Final Test Loss: {test_loss}")
-        end_time = time.time()
-        total_duration = end_time - start_time
-        print(f"Total Training Time: {total_duration / 3600:.2f} hours.")
-        torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, baseline_file_path + f"Losses.pt")
-    except:
+                save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"Checkpoint-{model_name}.pt")
+        if test_dataset:
+            test_loss = eval_model(model, test_loader, device)
+            print(f"Final Test Loss: {test_loss}")
+            end_time = time.time()
+            total_duration = end_time - start_time
+            print(f"Total Training Time: {total_duration / 3600:.2f} hours.")
+            torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, baseline_file_path + f"Losses-{model_name}.pt")
+    except Exception as e:
+        print(f"Exception thrown: {e}")
         if training_losses:
-            save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"Crash-Checkpoint.pt")
-            torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, baseline_file_path + f"Losses.pt")
+            save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, f"Crash-Checkpoint-{model_name}.pt")
+            torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, baseline_file_path + f"Losses-{model_name}.pt")
     finally:
         torch.cuda.empty_cache()
+    # To help with hyperparameter tuning
+    return best_valid_loss
 
 if __name__ == "__main__":
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -262,4 +282,19 @@ if __name__ == "__main__":
         "mask_token": "<mask>"
     })
 
-    train_full_model(tokenizer)
+    # Block size must be adjusted on its own, if at all, since splitting the dataset is determined by block_size
+    block_size=256
+
+    # Prepare the datasets
+    train_dataset = WikitextDataset(train_data_file_path, block_size)
+    valid_dataset = WikitextDataset(valid_data_file_path, block_size)
+    test_dataset = WikitextDataset(test_data_file_path, block_size)
+
+    args = get_args()
+    if args.tune:
+        print("Testing hyperparameter combinations...")
+        train_dataset = get_reduced_dataset(train_dataset, 0.05)
+    else:
+        print("Training model...")
+        train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, block_size, "Final"
+                         )
