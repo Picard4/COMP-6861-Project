@@ -168,9 +168,7 @@ def eval_model(
     total_loss = 0.0
 
     for i, batch in enumerate(dataloader):
-        full_sequence = batch[0].to(device)
-        x = full_sequence[:, :-1]
-        y = full_sequence[:, 1:]
+        x, y = batch[0].to(device), batch[1].to(device)
 
         # Use mixed-precision to save some time!
         with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16):
