@@ -36,7 +36,7 @@ def save_model_checkpoint(epoch, model, optimizer, scheduler, loss, best_valid_l
 
     torch.save(checkpoint, baseline_file_path + save_file_name)
 
-def get_reduced_dataset(full_dataset, subset_ratio=0.05):
+def get_reduced_dataset(full_dataset, subset_ratio=0.02):
     subset_size = int(len(full_dataset) * subset_ratio)
     indices = np.arange(len(full_dataset))
     rng = np.random.default_rng(42)
@@ -155,6 +155,9 @@ def train_epoch(model, dataloader, optimizer, scheduler, accumulation_steps, dev
         # Sleep every 10 batches to (hopefully) avoid microwaving my laptop
         if (i + 1) % 10 == 0:
             time.sleep(0.1)
+            # To ensure that training is still working...
+            if (i + 1) % 50 == 0:
+                print(f"Batch {i+1}/{len(dataloader)}...", flush=True)
 
     return total_loss / len(dataloader)
 
@@ -203,8 +206,8 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
         batch_size=batch_size,
         shuffle=True,
         pin_memory=True,
-        num_workers=4,
-        persistent_workers=True
+        num_workers=0,
+        persistent_workers=False
     )
     valid_loader = DataLoader(
         valid_dataset,
@@ -333,7 +336,8 @@ if __name__ == "__main__":
     if args.tune:
         level = min(args.tune, 3)
         print(f"Testing hyperparameter combinations at level {level}...")
-        train_dataset = get_reduced_dataset(train_dataset, 0.05)
+        # Train on 2% of the dataset.
+        train_dataset = get_reduced_dataset(train_dataset, 0.02)
         num_epochs = 5
 
         study = optuna.create_study(direction="minimize",
