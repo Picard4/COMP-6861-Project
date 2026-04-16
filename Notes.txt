@@ -1,2 +1,3 @@
 To access venv:
+cd C:\Users\Palmar\Documents\Concordia\COMP-6861\COMP-6861-Project
 & c:\Users\Palmar\Documents\Concordia\COMP-6861\COMP-6861-Project\.venv\Scripts\Activate.ps1

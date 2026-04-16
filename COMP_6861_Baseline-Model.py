@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import optuna
+from optuna.samplers import TPESampler
 from torch.utils.data import Dataset, DataLoader, Subset
 from transformers import PreTrainedTokenizerFast
 
@@ -336,7 +337,9 @@ if __name__ == "__main__":
         print(f"Testing hyperparameter combinations at level {level}...")
         train_dataset = get_reduced_dataset(train_dataset, 0.05)
         num_epochs = 5
-        study = optuna.create_study(direction="minimize", 
+
+        study = optuna.create_study(direction="minimize",
+                                    sampler=TPESampler(seed=42),
                                     study_name=f"Wikitext_Level_{level}",
                                     storage="sqlite:///tuning_history.db",
                                     load_if_exists=True)
