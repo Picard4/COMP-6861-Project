@@ -178,8 +178,8 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
         batch_size=batch_size,
         shuffle=True,
         pin_memory=True,
-        num_workers=0,
-        persistent_workers=False
+        num_workers=2,
+        persistent_workers=True
     )
     valid_loader = DataLoader(
         valid_dataset,
@@ -295,21 +295,27 @@ if __name__ == "__main__":
     })
 
     # Block size must be adjusted on its own, if at all, since splitting the dataset is determined by block_size
-    # 512 may be an alternative to consider...
+    # 512 may be an alternative to consider, given time...
     block_size=256
 
     # Prepare the datasets
     train_dataset = WikitextDataset(TRAIN_DATA_FILE_PATH, block_size)
     valid_dataset = WikitextDataset(VALID_DATA_FILE_PATH, block_size)
 
+    # The main training dataset is about 1 GB. 
+    # That's way too large to train in a reasonable time frame for me (one epoch on 1% takes roughly an hour to an hour + 45 minutes). Let's cut it down to 2.5%.
+    # The tokenizer was trained on the full training set - this significantly reduces the risk of <unk> tokens, though, and it's the same between all models I will train.
+    # The validation and test sets are less than 1% of the training set - no need to reduce either.
+    train_dataset = get_reduced_dataset(train_dataset, 0.025)
+
     args = get_args()
     if args.tune:
         level = min(args.tune, 2)
         print(f"Testing hyperparameter combinations at level {level}...", flush=True)
-        # Train on 1% of the dataset.
-        train_dataset = get_reduced_dataset(train_dataset, 0.01)
+        # Train on 20% of the reduced dataset - that means 0.5% of the original training set.
+        train_dataset = get_reduced_dataset(train_dataset, 0.2)
 
-        pruner = optuna.pruners.MedianPruner(n_startup_trials=4, n_warmup_steps=0)
+        pruner = optuna.pruners.MedianPruner(n_startup_trials=4, n_warmup_steps=1)
         study = optuna.create_study(direction="minimize",
                                     sampler=TPESampler(seed=42),
                                     study_name=f"Wikitext_Level_{level}",
@@ -318,13 +324,13 @@ if __name__ == "__main__":
                                     pruner=pruner)
         if args.tune == 1:
             study.optimize(
-                lambda trial: hyperparameter_tuning_objective_l1(trial, tokenizer, block_size, 2, train_dataset, valid_dataset, device), 
-                n_trials=25
+                lambda trial: hyperparameter_tuning_objective_l1(trial, tokenizer, block_size, 3, train_dataset, valid_dataset, device), 
+                n_trials=12
             )
         else:
             study.optimize(
                 lambda trial: hyperparameter_tuning_objective_l2(trial, tokenizer, block_size, 3, train_dataset, valid_dataset, device), 
-                n_trials=10
+                n_trials=8
             )
         print(f"Best Hyperparameters: {study.best_params}", flush=True)
     else:

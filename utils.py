@@ -26,6 +26,8 @@ def save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_los
 def get_reduced_dataset(full_dataset, subset_ratio=0.01):
     subset_size = int(len(full_dataset) * subset_ratio)
     indices = np.arange(len(full_dataset))
+
+    # rng is hard-coded to ensure deterministic behaviour
     rng = np.random.default_rng(42)
     rng.shuffle(indices)
 
