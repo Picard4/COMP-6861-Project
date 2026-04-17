@@ -10,6 +10,7 @@ VALID_DATA_FILE_PATH = DATA_FILE_PATH + "valid-dataset-tokens.pt"
 TEST_DATA_FILE_PATH = DATA_FILE_PATH + "test-dataset-tokens.pt"
 BASELINE_FILE_PATH = DATA_FILE_PATH + "baseline-models/"
 DIFFUSION_FILE_PATH = DATA_FILE_PATH + "diffusion-models/"
+EARLY_STOP_EPOCHS = 3
 
 def save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, file_path, save_file_name):
     checkpoint = {

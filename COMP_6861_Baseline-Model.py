@@ -9,7 +9,7 @@ import optuna
 from optuna.samplers import TPESampler
 from torch.utils.data import Dataset, DataLoader
 from transformers import PreTrainedTokenizerFast
-from utils import save_model_checkpoint, get_reduced_dataset, TOKENIZER_FILE_PATH, TRAIN_DATA_FILE_PATH, VALID_DATA_FILE_PATH, TEST_DATA_FILE_PATH, BASELINE_FILE_PATH
+from utils import save_model_checkpoint, get_reduced_dataset, TOKENIZER_FILE_PATH, TRAIN_DATA_FILE_PATH, VALID_DATA_FILE_PATH, TEST_DATA_FILE_PATH, BASELINE_FILE_PATH, EARLY_STOP_EPOCHS
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -214,6 +214,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
     training_losses = []
     valid_losses = []
     best_valid_loss = float('inf')
+    no_improvement_epochs = 0
     try:
         for epoch in range(1, num_epochs + 1):
             epoch_training_loss = train_epoch(model, train_loader, optimizer, scheduler, accumulation_steps, device)
@@ -224,10 +225,16 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
             valid_losses.append(epoch_valid_loss)
             if (epoch_valid_loss < best_valid_loss):
                 best_valid_loss = epoch_valid_loss
+                no_improvement_epochs = 0
                 if test_dataset:
                     save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"BestModel.pt")
-            elif test_dataset:
-                save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"Checkpoint.pt")
+            else:
+                no_improvement_epochs = no_improvement_epochs + 1
+                if no_improvement_epochs >= EARLY_STOP_EPOCHS:
+                    print(f"No improvements spotted for {EARLY_STOP_EPOCHS} epochs. Stopping early...", flush=True)
+                    break
+                if test_dataset:
+                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"Checkpoint.pt")
             if trial is not None:
                 trial.report(epoch_valid_loss, epoch)
                 if trial.should_prune():
