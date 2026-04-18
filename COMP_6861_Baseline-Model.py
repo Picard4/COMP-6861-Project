@@ -1,13 +1,14 @@
 import argparse
 import sys
-import random
 import time
 import torch
 import torch.nn as nn
 import optuna
 from optuna.samplers import TPESampler
-from torch.utils.data import Dataset, DataLoader
-from utils import save_model_checkpoint, get_reduced_dataset, get_tokenizer, TRAIN_DATA_FILE_PATH, VALID_DATA_FILE_PATH, TEST_DATA_FILE_PATH, BASELINE_FILE_PATH, EARLY_STOP_EPOCHS, BLOCK_SIZE, SUBSET_RATIO_OF_DATASET_TO_TRAIN, SUBSET_RATIO_OF_DATASET_TO_TUNE
+from torch.utils.data import DataLoader
+from utils import WikitextDataset, save_model_checkpoint, get_reduced_dataset, get_tokenizer, set_randomization_seed, get_optimizer, get_scheduler
+from utils import TRAIN_DATA_FILE_PATH, VALID_DATA_FILE_PATH, TEST_DATA_FILE_PATH, BASELINE_FILE_PATH, SUBSET_RATIO_OF_DATASET_TO_TRAIN, SUBSET_RATIO_OF_DATASET_TO_TUNE
+from utils import EARLY_STOP_EPOCHS, BASELINE_MODE_INDICATOR, BLOCK_SIZE_BASELINE, BATCH_SIZE_BASELINE, ACCUMULATION_STEPS_BASELINE
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -15,22 +16,6 @@ def get_args():
     parser.add_argument("--tune", type=int, default=0, help="Hyperparameter tuning mode level (0 means no tuning)")
     
     return parser.parse_args()
-
-class WikitextDataset(Dataset):
-    def __init__(self, file_path, block_size):
-        # We need to start by loading data into CPU. We only move to GPU once batches are ready.
-        self.data = torch.load(file_path, mmap=True, weights_only=True).long()
-        self.block_size = block_size
-    
-    def __len__(self):
-        return len(self.data) - self.block_size
-    
-    def __getitem__(self, index):
-        chunk = self.data[index : index + self.block_size]
-        # The goal is to predict the next token, so we just need to shift our chunk by one.
-        target = self.data[index + 1 : index + self.block_size + 1]
-
-        return chunk, target
 
 class BaselineDecoderModel(nn.Module):
     def __init__(self, tokenizer, block_size, d_key_value, nhead, n_layers, dropout, dim_feedforward_scalar, label_smoothing):
@@ -160,20 +145,17 @@ def eval_model(
 # This is the main code. Sets up the baseline model.
 # Datasets are assumed to use the same block_size as the datasets that are sent in.
 # Send in None for the test_dataset to indicate that this training is for hyperparameter tuning.
-# Block size must be adjusted on its own (since splitting the dataset is determined by block_size), so this project will omit tuning it.
-# batch_size and accumulation_steps must go as high as my hardware will allow them to go (no tuning will be done for them as a result).
-def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, block_size=256, num_epochs=10,
+def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, num_epochs=10,
                     n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4, lr=5e-4,    # L1 Hyperparameters
                     warmup_pct_start=0.1, dropout=0.1, weight_decay=0.01, label_smoothing=0.1, # L2 Hyperparameters
-                    batch_size=16, accumulation_steps=8, trial=None):  # Pre-determined hyperparameters (no tuning done) and the trial for tuning.
+                    trial=None):  # The trial for tuning.
     # Setup before initializing the model
     start_time = time.time()
-    random.seed(0)
-    torch.manual_seed(0)
+    set_randomization_seed()
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=batch_size,
+        batch_size=BATCH_SIZE_BASELINE,
         shuffle=True,
         pin_memory=True,
         num_workers=2,
@@ -181,32 +163,23 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
     )
     valid_loader = DataLoader(
         valid_dataset,
-        batch_size=batch_size
+        batch_size=BATCH_SIZE_BASELINE
     )
 
     if test_dataset:
         test_loader = DataLoader(
             test_dataset,
-            batch_size=batch_size
+            batch_size=BATCH_SIZE_BASELINE
         )
 
     # Model initialization
-    model = BaselineDecoderModel(tokenizer, block_size, 
+    model = BaselineDecoderModel(tokenizer, BLOCK_SIZE_BASELINE, 
                                  d_key_value, nhead, n_layers, dropout, dim_feedforward_scalar,
                                  label_smoothing)
     model.to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    # Due to gradient accumulation, we don't call optimizer.step on every loop.
-    # This is how many times we will *actually* call optimizer.step.
-    total_effective_steps = num_epochs * ((len(train_loader) + accumulation_steps - 1) // accumulation_steps)
-
-    scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer,
-        max_lr=lr,
-        total_steps=total_effective_steps,
-        pct_start=warmup_pct_start
-    )
+    optimizer = get_optimizer(model.parameters(), lr, weight_decay)
+    scheduler = get_scheduler(optimizer, lr, num_epochs, train_loader, ACCUMULATION_STEPS_BASELINE, warmup_pct_start)
 
     # Model training
     training_losses = []
@@ -215,7 +188,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
     no_improvement_epochs = 0
     try:
         for epoch in range(1, num_epochs + 1):
-            epoch_training_loss = train_epoch(model, train_loader, optimizer, scheduler, accumulation_steps, device)
+            epoch_training_loss = train_epoch(model, train_loader, optimizer, scheduler, ACCUMULATION_STEPS_BASELINE, device)
             epoch_valid_loss = eval_model(model, valid_loader, device)
             print(f"Epoch {epoch} | Training loss: {epoch_training_loss} | Valid loss: {epoch_valid_loss}", flush=True)
 
@@ -256,7 +229,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
     # To help with hyperparameter tuning
     return best_valid_loss
 
-def hyperparameter_tuning_objective_l1(trial, tokenizer, block_size, num_epochs, train_dataset, valid_dataset, device):
+def hyperparameter_tuning_objective_l1(trial, tokenizer, num_epochs, train_dataset, valid_dataset, device):
     n_layers = trial.suggest_int("n_layers", 4, 12)
     d_key_value = trial.suggest_categorical("d_key_value", [32, 64, 128])
     nhead = trial.suggest_categorical("nhead", [4, 8, 12])
@@ -268,18 +241,18 @@ def hyperparameter_tuning_objective_l1(trial, tokenizer, block_size, num_epochs,
     if (nhead * d_key_value) > 768:
         raise optuna.exceptions.TrialPruned()
 
-    validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, block_size, num_epochs,
+    validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, num_epochs,
                                        n_layers=n_layers, d_key_value=d_key_value, nhead=nhead, dim_feedforward_scalar=dim_feedforward_scalar, lr=lr,
                                        trial=trial)
     return validation_loss
 
-def hyperparameter_tuning_objective_l2(trial, tokenizer, block_size, num_epochs, train_dataset, valid_dataset, device):
+def hyperparameter_tuning_objective_l2(trial, tokenizer, num_epochs, train_dataset, valid_dataset, device):
     warmup_pct_start = trial.suggest_float("warmup_pct_start", 0.05, 0.3)
     dropout = trial.suggest_float("dropout", 0.05, 0.4)
     weight_decay = trial.suggest_float("weight_decay", 1e-4, 0.3, log=True)
     label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.2)
 
-    validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, block_size, num_epochs,
+    validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, num_epochs,
                                        n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4, lr=5e-4, 
                                        warmup_pct_start=warmup_pct_start, dropout=dropout, weight_decay=weight_decay, label_smoothing=label_smoothing,
                                        trial=trial)
@@ -292,8 +265,8 @@ if __name__ == "__main__":
     tokenizer = get_tokenizer()
 
     # Prepare the datasets
-    train_dataset = WikitextDataset(TRAIN_DATA_FILE_PATH, BLOCK_SIZE)
-    valid_dataset = WikitextDataset(VALID_DATA_FILE_PATH, BLOCK_SIZE)
+    train_dataset = WikitextDataset(TRAIN_DATA_FILE_PATH, BLOCK_SIZE_BASELINE, mode=BASELINE_MODE_INDICATOR)
+    valid_dataset = WikitextDataset(VALID_DATA_FILE_PATH, BLOCK_SIZE_BASELINE, mode=BASELINE_MODE_INDICATOR)
 
     # Reduce the training set to a manageable level
     train_dataset = get_reduced_dataset(train_dataset, SUBSET_RATIO_OF_DATASET_TO_TRAIN)
@@ -313,17 +286,17 @@ if __name__ == "__main__":
                                     pruner=pruner)
         if args.tune == 1:
             study.optimize(
-                lambda trial: hyperparameter_tuning_objective_l1(trial, tokenizer, BLOCK_SIZE, 3, train_dataset, valid_dataset, device), 
+                lambda trial: hyperparameter_tuning_objective_l1(trial, tokenizer, 3, train_dataset, valid_dataset, device), 
                 n_trials=12
             )
         else:
             study.optimize(
-                lambda trial: hyperparameter_tuning_objective_l2(trial, tokenizer, BLOCK_SIZE, 3, train_dataset, valid_dataset, device), 
+                lambda trial: hyperparameter_tuning_objective_l2(trial, tokenizer, 3, train_dataset, valid_dataset, device), 
                 n_trials=8
             )
         print(f"Best Hyperparameters: {study.best_params}", flush=True)
     else:
         print("Training model...", flush=True)
-        test_dataset = WikitextDataset(TEST_DATA_FILE_PATH, BLOCK_SIZE)
-        train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, BLOCK_SIZE, 10
+        test_dataset = WikitextDataset(TEST_DATA_FILE_PATH, BLOCK_SIZE_BASELINE, mode=BASELINE_MODE_INDICATOR)
+        train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, 10
                          )
