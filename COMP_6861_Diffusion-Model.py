@@ -7,8 +7,8 @@ import optuna
 from optuna.samplers import TPESampler
 from torch.utils.data import DataLoader
 from utils import WikitextDataset, save_model_checkpoint, get_reduced_dataset, get_tokenizer, set_randomization_seed, get_optimizer, get_scheduler
-from utils import TRAIN_DATA_FILE_PATH, VALID_DATA_FILE_PATH, TEST_DATA_FILE_PATH, BASELINE_FILE_PATH, SUBSET_RATIO_OF_DATASET_TO_TRAIN, SUBSET_RATIO_OF_DATASET_TO_TUNE
-from utils import EARLY_STOP_EPOCHS, BASELINE_MODE_INDICATOR, BLOCK_SIZE_BASELINE, BATCH_SIZE_BASELINE, ACCUMULATION_STEPS_BASELINE
+from utils import TRAIN_DATA_FILE_PATH, VALID_DATA_FILE_PATH, TEST_DATA_FILE_PATH, DIFFUSION_FILE_PATH, SUBSET_RATIO_OF_DATASET_TO_TRAIN, SUBSET_RATIO_OF_DATASET_TO_TUNE
+from utils import EARLY_STOP_EPOCHS, DIFFUSION_MODE_INDICATOR, BLOCK_SIZE_DIFFUSION, BATCH_SIZE_DIFFUSION, ACCUMULATION_STEPS_DIFFUSION
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -142,7 +142,7 @@ def eval_model(
 
     return total_loss / len(dataloader)
 
-# This is the main code. Sets up the baseline model.
+# This is the main code. Sets up the diffusion model.
 # Datasets are assumed to use the same block_size as the datasets that are sent in.
 # Send in None for the test_dataset to indicate that this training is for hyperparameter tuning.
 def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, num_epochs=10,
@@ -155,7 +155,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
 
     train_loader = DataLoader(
         train_dataset,
-        batch_size=BATCH_SIZE_BASELINE,
+        batch_size=BATCH_SIZE_DIFFUSION,
         shuffle=True,
         pin_memory=True,
         num_workers=2,
@@ -163,23 +163,23 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
     )
     valid_loader = DataLoader(
         valid_dataset,
-        batch_size=BATCH_SIZE_BASELINE
+        batch_size=BATCH_SIZE_DIFFUSION
     )
 
     if test_dataset:
         test_loader = DataLoader(
             test_dataset,
-            batch_size=BATCH_SIZE_BASELINE
+            batch_size=BATCH_SIZE_DIFFUSION
         )
 
     # Model initialization
-    model = BaselineDecoderModel(tokenizer, BLOCK_SIZE_BASELINE, 
+    model = BaselineDecoderModel(tokenizer, BLOCK_SIZE_DIFFUSION, 
                                  d_key_value, nhead, n_layers, dropout, dim_feedforward_scalar,
                                  label_smoothing)
     model.to(device)
 
     optimizer = get_optimizer(model.parameters(), lr, weight_decay)
-    scheduler = get_scheduler(optimizer, lr, num_epochs, train_loader, ACCUMULATION_STEPS_BASELINE, warmup_pct_start)
+    scheduler = get_scheduler(optimizer, lr, num_epochs, train_loader, ACCUMULATION_STEPS_DIFFUSION, warmup_pct_start)
 
     # Model training
     training_losses = []
@@ -188,7 +188,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
     no_improvement_epochs = 0
     try:
         for epoch in range(1, num_epochs + 1):
-            epoch_training_loss = train_epoch(model, train_loader, optimizer, scheduler, ACCUMULATION_STEPS_BASELINE, device)
+            epoch_training_loss = train_epoch(model, train_loader, optimizer, scheduler, ACCUMULATION_STEPS_DIFFUSION, device)
             epoch_valid_loss = eval_model(model, valid_loader, device)
             print(f"Epoch {epoch} | Training loss: {epoch_training_loss} | Valid loss: {epoch_valid_loss}", flush=True)
 
@@ -198,14 +198,14 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
                 best_valid_loss = epoch_valid_loss
                 no_improvement_epochs = 0
                 if test_dataset:
-                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"BestModel.pt")
+                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, DIFFUSION_FILE_PATH, f"BestModel.pt")
             else:
                 no_improvement_epochs = no_improvement_epochs + 1
                 if no_improvement_epochs >= EARLY_STOP_EPOCHS:
                     print(f"No improvements spotted for {EARLY_STOP_EPOCHS} epochs. Stopping early...", flush=True)
                     break
                 if test_dataset:
-                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"Checkpoint.pt")
+                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, DIFFUSION_FILE_PATH, f"Checkpoint.pt")
             if trial is not None:
                 trial.report(epoch_valid_loss, epoch)
                 if trial.should_prune():
@@ -216,14 +216,14 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
             end_time = time.time()
             total_duration = end_time - start_time
             print(f"Total Training Time: {total_duration / 3600:.2f} hours.", flush=True)
-            torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, BASELINE_FILE_PATH + f"Losses.pt")
+            torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, DIFFUSION_FILE_PATH + f"Losses.pt")
     except optuna.TrialPruned:
         raise
     except Exception as e:
         print(f"Exception thrown: {e}", file=sys.stderr, flush=True)
         if training_losses:
-            save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"Crash-Checkpoint.pt")
-            torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, BASELINE_FILE_PATH + f"Losses.pt")
+            save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, DIFFUSION_FILE_PATH, f"Crash-Checkpoint.pt")
+            torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, DIFFUSION_FILE_PATH + f"Losses.pt")
     finally:
         torch.cuda.empty_cache()
     # To help with hyperparameter tuning
@@ -265,8 +265,8 @@ if __name__ == "__main__":
     tokenizer = get_tokenizer()
 
     # Prepare the datasets
-    train_dataset = WikitextDataset(TRAIN_DATA_FILE_PATH, BLOCK_SIZE_BASELINE, mode=BASELINE_MODE_INDICATOR)
-    valid_dataset = WikitextDataset(VALID_DATA_FILE_PATH, BLOCK_SIZE_BASELINE, mode=BASELINE_MODE_INDICATOR)
+    train_dataset = WikitextDataset(TRAIN_DATA_FILE_PATH, BLOCK_SIZE_DIFFUSION, mode=DIFFUSION_MODE_INDICATOR)
+    valid_dataset = WikitextDataset(VALID_DATA_FILE_PATH, BLOCK_SIZE_DIFFUSION, mode=DIFFUSION_MODE_INDICATOR)
 
     # Reduce the training set to a manageable level
     train_dataset = get_reduced_dataset(train_dataset, SUBSET_RATIO_OF_DATASET_TO_TRAIN)
@@ -280,8 +280,8 @@ if __name__ == "__main__":
         pruner = optuna.pruners.MedianPruner(n_startup_trials=4, n_warmup_steps=1)
         study = optuna.create_study(direction="minimize",
                                     sampler=TPESampler(seed=42),
-                                    study_name=f"Wikitext_Level_{BASELINE_MODE_INDICATOR}_{level}",
-                                    storage=f"sqlite:///tuning_history_{BASELINE_MODE_INDICATOR}_{level}.db",
+                                    study_name=f"Wikitext_Level_{DIFFUSION_MODE_INDICATOR}_{level}",
+                                    storage=f"sqlite:///tuning_history_{DIFFUSION_MODE_INDICATOR}_{level}.db",
                                     load_if_exists=True,
                                     pruner=pruner)
         if args.tune == 1:
@@ -297,6 +297,6 @@ if __name__ == "__main__":
         print(f"Best Hyperparameters: {study.best_params}", flush=True)
     else:
         print("Training model...", flush=True)
-        test_dataset = WikitextDataset(TEST_DATA_FILE_PATH, BLOCK_SIZE_BASELINE, mode=BASELINE_MODE_INDICATOR)
+        test_dataset = WikitextDataset(TEST_DATA_FILE_PATH, BLOCK_SIZE_DIFFUSION, mode=DIFFUSION_MODE_INDICATOR)
         train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, 10
                          )
