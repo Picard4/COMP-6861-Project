@@ -60,6 +60,11 @@ def set_randomization_seed():
     random.seed(0)
     torch.manual_seed(0)
 
+def get_device():
+    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}", flush=True)
+    return device
+
 def get_tokenizer():
     tokenizer = PreTrainedTokenizerFast(tokenizer_file=TOKENIZER_FILE_PATH)
 

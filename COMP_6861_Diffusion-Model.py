@@ -6,7 +6,7 @@ import torch.nn as nn
 import optuna
 from optuna.samplers import TPESampler
 from torch.utils.data import DataLoader
-from utils import WikitextDataset, save_model_checkpoint, get_reduced_dataset, get_tokenizer, set_randomization_seed, get_optimizer, get_scheduler
+from utils import WikitextDataset, save_model_checkpoint, get_device, get_reduced_dataset, get_tokenizer, set_randomization_seed, get_optimizer, get_scheduler
 from utils import TRAIN_DATA_FILE_PATH, VALID_DATA_FILE_PATH, TEST_DATA_FILE_PATH, DIFFUSION_FILE_PATH, SUBSET_RATIO_OF_DATASET_TO_TRAIN, SUBSET_RATIO_OF_DATASET_TO_TUNE
 from utils import EARLY_STOP_EPOCHS, DIFFUSION_MODE_INDICATOR, BLOCK_SIZE_DIFFUSION, BATCH_SIZE_DIFFUSION, ACCUMULATION_STEPS_DIFFUSION
 
@@ -259,9 +259,7 @@ def hyperparameter_tuning_objective_l2(trial, tokenizer, num_epochs, train_datas
     return validation_loss
 
 if __name__ == "__main__":
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}", flush=True)
-
+    device = get_device()
     tokenizer = get_tokenizer()
 
     # Prepare the datasets
