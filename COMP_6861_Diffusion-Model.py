@@ -4,10 +4,11 @@ import random
 import time
 import torch
 import torch.nn as nn
+import numpy as np
 import optuna
 from optuna.samplers import TPESampler
 from torch.utils.data import Dataset, DataLoader
-from utils import save_model_checkpoint, get_reduced_dataset, get_tokenizer, TRAIN_DATA_FILE_PATH, VALID_DATA_FILE_PATH, TEST_DATA_FILE_PATH, BASELINE_FILE_PATH, EARLY_STOP_EPOCHS, BLOCK_SIZE, SUBSET_RATIO_OF_DATASET_TO_TRAIN, SUBSET_RATIO_OF_DATASET_TO_TUNE
+from utils import save_model_checkpoint, get_reduced_dataset, get_tokenizer, TRAIN_DATA_FILE_PATH, VALID_DATA_FILE_PATH, TEST_DATA_FILE_PATH, DIFFUSION_FILE_PATH, EARLY_STOP_EPOCHS, BLOCK_SIZE, SUBSET_RATIO_OF_DATASET_TO_TRAIN, SUBSET_RATIO_OF_DATASET_TO_TUNE
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -27,10 +28,9 @@ class WikitextDataset(Dataset):
     
     def __getitem__(self, index):
         chunk = self.data[index : index + self.block_size]
-        # The goal is to predict the next token, so we just need to shift our chunk by one.
-        target = self.data[index + 1 : index + self.block_size + 1]
-
-        return chunk, target
+        
+        # The goal in a diffusion model is to remove noise to form the chunk, so the chunk is our target!
+        return chunk
 
 class BaselineDecoderModel(nn.Module):
     def __init__(self, tokenizer, block_size, d_key_value, nhead, n_layers, dropout, dim_feedforward_scalar, label_smoothing):
@@ -157,7 +157,7 @@ def eval_model(
 
     return total_loss / len(dataloader)
 
-# This is the main code. Sets up the baseline model.
+# This is the main code. Sets up the diffusion model.
 # Datasets are assumed to use the same block_size as the datasets that are sent in.
 # Send in None for the test_dataset to indicate that this training is for hyperparameter tuning.
 # Block size must be adjusted on its own (since splitting the dataset is determined by block_size), so this project will omit tuning it.
@@ -225,14 +225,14 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
                 best_valid_loss = epoch_valid_loss
                 no_improvement_epochs = 0
                 if test_dataset:
-                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"BestModel.pt")
+                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, DIFFUSION_FILE_PATH, f"BestModel.pt")
             else:
                 no_improvement_epochs = no_improvement_epochs + 1
                 if no_improvement_epochs >= EARLY_STOP_EPOCHS:
                     print(f"No improvements spotted for {EARLY_STOP_EPOCHS} epochs. Stopping early...", flush=True)
                     break
                 if test_dataset:
-                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"Checkpoint.pt")
+                    save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, DIFFUSION_FILE_PATH, f"Checkpoint.pt")
             if trial is not None:
                 trial.report(epoch_valid_loss, epoch)
                 if trial.should_prune():
@@ -243,47 +243,24 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
             end_time = time.time()
             total_duration = end_time - start_time
             print(f"Total Training Time: {total_duration / 3600:.2f} hours.", flush=True)
-            torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, BASELINE_FILE_PATH + f"Losses.pt")
+            torch.save({"training_losses": training_losses, "valid_losses": valid_losses, "test_loss": test_loss, "total_duration": total_duration}, DIFFUSION_FILE_PATH + f"Losses.pt")
     except optuna.TrialPruned:
         raise
     except Exception as e:
         print(f"Exception thrown: {e}", file=sys.stderr, flush=True)
         if training_losses:
-            save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"Crash-Checkpoint.pt")
-            torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, BASELINE_FILE_PATH + f"Losses.pt")
+            save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, DIFFUSION_FILE_PATH, f"Crash-Checkpoint.pt")
+            torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, DIFFUSION_FILE_PATH + f"Losses.pt")
     finally:
         torch.cuda.empty_cache()
     # To help with hyperparameter tuning
     return best_valid_loss
 
 def hyperparameter_tuning_objective_l1(trial, tokenizer, block_size, num_epochs, train_dataset, valid_dataset, device):
-    n_layers = trial.suggest_int("n_layers", 4, 12)
-    d_key_value = trial.suggest_categorical("d_key_value", [32, 64, 128])
-    nhead = trial.suggest_categorical("nhead", [4, 8, 12])
-    dim_feedforward_scalar = trial.suggest_int("dim_feedforward_scalar", 2, 4)
-    lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
-
-    # These two hyperparameters make up the d_model.
-    # If it's too high, my training will crash!
-    if (nhead * d_key_value) > 768:
-        raise optuna.exceptions.TrialPruned()
-
-    validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, block_size, num_epochs,
-                                       n_layers=n_layers, d_key_value=d_key_value, nhead=nhead, dim_feedforward_scalar=dim_feedforward_scalar, lr=lr,
-                                       trial=trial)
-    return validation_loss
+    pass
 
 def hyperparameter_tuning_objective_l2(trial, tokenizer, block_size, num_epochs, train_dataset, valid_dataset, device):
-    warmup_pct_start = trial.suggest_float("warmup_pct_start", 0.05, 0.3)
-    dropout = trial.suggest_float("dropout", 0.05, 0.4)
-    weight_decay = trial.suggest_float("weight_decay", 1e-4, 0.3, log=True)
-    label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.2)
-
-    validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, block_size, num_epochs,
-                                       n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4, lr=5e-4, 
-                                       warmup_pct_start=warmup_pct_start, dropout=dropout, weight_decay=weight_decay, label_smoothing=label_smoothing,
-                                       trial=trial)
-    return validation_loss
+    pass
 
 if __name__ == "__main__":
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
