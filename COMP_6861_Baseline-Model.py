@@ -253,7 +253,7 @@ def hyperparameter_tuning_objective_l2(trial, tokenizer, num_epochs, train_datas
     label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.2)
 
     validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, num_epochs,
-                                       n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4, lr=5e-4, 
+                                       n_layers=9, d_key_value=32, nhead=12, dim_feedforward_scalar=2, lr=0.003063462210622081, 
                                        warmup_pct_start=warmup_pct_start, dropout=dropout, weight_decay=weight_decay, label_smoothing=label_smoothing,
                                        trial=trial)
     return validation_loss
@@ -272,6 +272,7 @@ if __name__ == "__main__":
     args = get_args()
     if args.tune:
         level = min(args.tune, 2)
+        num_epochs = 3
         print(f"Testing hyperparameter combinations at level {level}...", flush=True)
         train_dataset = get_reduced_dataset(train_dataset, SUBSET_RATIO_OF_DATASET_TO_TUNE)
 
@@ -279,22 +280,23 @@ if __name__ == "__main__":
         study = optuna.create_study(direction="minimize",
                                     sampler=TPESampler(seed=42),
                                     study_name=f"Wikitext_Level_{BASELINE_MODE_INDICATOR}_{level}",
-                                    storage=f"sqlite:///tuning_history_{BASELINE_MODE_INDICATOR}_{level}.db",
+                                    storage=f"sqlite:///tuning_history_{BASELINE_MODE_INDICATOR}.db",
                                     load_if_exists=True,
                                     pruner=pruner)
         if args.tune == 1:
             study.optimize(
-                lambda trial: hyperparameter_tuning_objective_l1(trial, tokenizer, 3, train_dataset, valid_dataset, device), 
+                lambda trial: hyperparameter_tuning_objective_l1(trial, tokenizer, num_epochs, train_dataset, valid_dataset, device), 
                 n_trials=12
             )
         else:
             study.optimize(
-                lambda trial: hyperparameter_tuning_objective_l2(trial, tokenizer, 3, train_dataset, valid_dataset, device), 
+                lambda trial: hyperparameter_tuning_objective_l2(trial, tokenizer, num_epochs, train_dataset, valid_dataset, device), 
                 n_trials=8
             )
         print(f"Best Hyperparameters: {study.best_params}", flush=True)
     else:
         print("Training model...", flush=True)
         test_dataset = WikitextDataset(TEST_DATA_FILE_PATH, BLOCK_SIZE_BASELINE, mode=BASELINE_MODE_INDICATOR)
-        train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, 10
+        train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, 10,
+                         n_layers=9, d_key_value=32, nhead=12, dim_feedforward_scalar=2, lr=0.003063462210622081
                          )

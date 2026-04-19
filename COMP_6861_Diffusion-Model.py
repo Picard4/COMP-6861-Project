@@ -272,6 +272,7 @@ if __name__ == "__main__":
     args = get_args()
     if args.tune:
         level = min(args.tune, 2)
+        num_epochs = 3
         print(f"Testing hyperparameter combinations at level {level}...", flush=True)
         train_dataset = get_reduced_dataset(train_dataset, SUBSET_RATIO_OF_DATASET_TO_TUNE)
 
@@ -279,17 +280,17 @@ if __name__ == "__main__":
         study = optuna.create_study(direction="minimize",
                                     sampler=TPESampler(seed=42),
                                     study_name=f"Wikitext_Level_{DIFFUSION_MODE_INDICATOR}_{level}",
-                                    storage=f"sqlite:///tuning_history_{DIFFUSION_MODE_INDICATOR}_{level}.db",
+                                    storage=f"sqlite:///tuning_history_{DIFFUSION_MODE_INDICATOR}.db",
                                     load_if_exists=True,
                                     pruner=pruner)
         if args.tune == 1:
             study.optimize(
-                lambda trial: hyperparameter_tuning_objective_l1(trial, tokenizer, 3, train_dataset, valid_dataset, device), 
+                lambda trial: hyperparameter_tuning_objective_l1(trial, tokenizer, num_epochs, train_dataset, valid_dataset, device), 
                 n_trials=12
             )
         else:
             study.optimize(
-                lambda trial: hyperparameter_tuning_objective_l2(trial, tokenizer, 3, train_dataset, valid_dataset, device), 
+                lambda trial: hyperparameter_tuning_objective_l2(trial, tokenizer, num_epochs, train_dataset, valid_dataset, device), 
                 n_trials=8
             )
         print(f"Best Hyperparameters: {study.best_params}", flush=True)
