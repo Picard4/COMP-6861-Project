@@ -298,5 +298,5 @@ if __name__ == "__main__":
         print("Training model...", flush=True)
         test_dataset = WikitextDataset(TEST_DATA_FILE_PATH, BLOCK_SIZE_BASELINE, mode=BASELINE_MODE_INDICATOR)
         train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, 10,
-                         n_layers=9, d_key_value=32, nhead=12, dim_feedforward_scalar=2, lr=0.003063462210622081
-                         )
+                         n_layers=9, d_key_value=32, nhead=12, dim_feedforward_scalar=2, lr=0.003063462210622081,
+                         warmup_pct_start=0.19810364221551063, dropout=0.0662576444519992, weight_decay=0.012957079329680455, label_smoothing=0.03410482473745831)
