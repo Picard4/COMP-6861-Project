@@ -25,64 +25,48 @@ def forward_noise_process(tokens, vocab_size, noise_ratio, device):
     forward_noise_tokens = torch.where(mask, random_tokens, tokens)
     return forward_noise_tokens
 
-
 class DiffusionModel(nn.Module):
-    def __init__(self, tokenizer, block_size, d_key_value, nhead, n_layers, dropout, dim_feedforward_scalar, label_smoothing):
+    def __init__(self, tokenizer, block_size, nhead, nhead_scalar, num_layers, time_embedding_dim, dropout, dim_feedforward_scalar, label_smoothing, max_timesteps=1000, self_conditioning_prob=0.5):
         super().__init__()
+
+        self.max_timesteps = max_timesteps
+        self.self_conditioning_prob = self_conditioning_prob
 
         # It must be possible to divide d_model by nhead, so I figured it would be best to create the d_model within the __init__.
         # Should make hyperparameter search a bit easier...
-        d_model = nhead * d_key_value
+        d_model = nhead * nhead_scalar
 
+        # Pull needed data from the tokenizer
+        padding_index = tokenizer.pad_token_id
         vocab_size = len(tokenizer)
-        self.padding_index = tokenizer.pad_token_id
 
-        self.token_embedding = nn.Embedding(vocab_size, d_model, padding_idx=self.padding_index)
-        self.positional_embedding = nn.Embedding(block_size, d_model, padding_idx=self.padding_index)
+        self.token_embedding = nn.Embedding(vocab_size, d_model, padding_idx=padding_index)
+        self.positional_embedding = nn.Embedding(block_size, d_model)
 
-        self.dropout = nn.Dropout(p=dropout)
+        self.time_embedding = nn.Sequential(
+            nn.Linear(1, time_embedding_dim),
+            nn.SiLU(),
+            nn.Linear(time_embedding_dim, d_model)
+        )
 
-        self.transformer_blocks = nn.ModuleList([
-            # Technically this is meant to be a decoder, but the TransformerDecoderLayer is meant to use a mask for memory and target.
-            # We only need a mask for the target (there is no memory since we have no encoder), so we can optimize out some math by using encoders.
-            # Technically, this is still a decoder since it's autoregressive https://magazine.sebastianraschka.com/p/understanding-encoder-and-decoder
-            nn.TransformerEncoderLayer(
+        encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
+            dim_feedforward = dim_feedforward_scalar * d_model,
             dropout=dropout,
-            dim_feedforward=dim_feedforward_scalar * d_model,
             batch_first=True,
             norm_first=True
-            ) for layer in range(n_layers)
-        ])
-
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.layer_norm = nn.LayerNorm(d_model)
-        self.linear_prediction_layer = nn.Linear(d_model, vocab_size)
+        self.linear_head = nn.Linear(d_model, vocab_size)
 
-        self.criterion = nn.CrossEntropyLoss(ignore_index=self.padding_index, label_smoothing=label_smoothing)
-        mask = torch.triu(torch.ones(block_size, block_size), diagonal=1).bool()
-        self.register_buffer('causal_mask', mask)
+        self.criterion = nn.CrossEntropyLoss(ignore_index=padding_index, label_smoothing=label_smoothing)
 
     def forward(self, source_indices):
         batch_size, sequence_length = source_indices.shape
 
-        # The causal_mask from the __init__ is designed to handle a mask at maximum capacity... which is rarely what we need in practice!
-        current_mask = self.causal_mask[:sequence_length, :sequence_length]
-
-        token_embeddings = self.token_embedding(source_indices)
-        positional_embeddings = self.positional_embedding(torch.arange(sequence_length, device=source_indices.device))
-
-        x = self.dropout(token_embeddings + positional_embeddings)
-
-        for block in self.transformer_blocks:
-            x = block(
-                src=x,
-                src_mask=current_mask,
-                is_causal=True
-            )
         
-        x = self.layer_norm(x)
-        logits = self.linear_prediction_layer(x)
 
         return logits
 

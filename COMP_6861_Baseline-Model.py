@@ -29,7 +29,7 @@ class BaselineDecoderModel(nn.Module):
         self.padding_index = tokenizer.pad_token_id
 
         self.token_embedding = nn.Embedding(vocab_size, d_model, padding_idx=self.padding_index)
-        self.positional_embedding = nn.Embedding(block_size, d_model, padding_idx=self.padding_index)
+        self.positional_embedding = nn.Embedding(block_size, d_model, padding_idx=self.padding_index) #TODO: Remove padding index argument and retrain if time allows.
 
         self.dropout = nn.Dropout(p=dropout)
 
@@ -109,6 +109,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, accumulation_steps, dev
         total_loss += loss.detach().item()
 
         # Sleep every 10 batches to (hopefully) avoid microwaving my laptop
+        # TODO: delete the sleep check if on cluster.
         if (i + 1) % 10 == 0:
             time.sleep(0.1)
             # To ensure that training is still working...
