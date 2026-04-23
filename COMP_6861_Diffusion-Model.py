@@ -17,7 +17,16 @@ def get_args():
     
     return parser.parse_args()
 
-class BaselineDecoderModel(nn.Module):
+# A noise_ratio of 0.7 mean we swap 70% of the tokens
+def forward_noise_process(tokens, vocab_size, noise_ratio, device):
+    random_values = torch.rand(tokens.shape, device=device)
+    mask = random_values < noise_ratio
+    random_tokens = torch.randint(0, vocab_size, tokens.shape, device=device)
+    forward_noise_tokens = torch.where(mask, random_tokens, tokens)
+    return forward_noise_tokens
+
+
+class DiffusionModel(nn.Module):
     def __init__(self, tokenizer, block_size, d_key_value, nhead, n_layers, dropout, dim_feedforward_scalar, label_smoothing):
         super().__init__()
 
@@ -77,12 +86,16 @@ class BaselineDecoderModel(nn.Module):
 
         return logits
 
-def train_epoch(model, dataloader, optimizer, scheduler, accumulation_steps, device):
+def train_epoch(model, vocab_size, dataloader, optimizer, scheduler, accumulation_steps, device):
     model.train()
     total_loss = 0.0
 
     for i, batch in enumerate(dataloader):
         x, y = batch[0].to(device), batch[1].to(device)
+
+        x = forward_noise_process(x, vocab_size, 0.5, device)
+
+        break
 
         # Use mixed-precision training to save some time!
         with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16):
@@ -152,6 +165,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
     # Setup before initializing the model
     start_time = time.time()
     set_randomization_seed()
+    vocab_size = len(tokenizer)
 
     train_loader = DataLoader(
         train_dataset,
@@ -173,7 +187,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
         )
 
     # Model initialization
-    model = BaselineDecoderModel(tokenizer, BLOCK_SIZE_DIFFUSION, 
+    model = DiffusionModel(tokenizer, BLOCK_SIZE_DIFFUSION, 
                                  d_key_value, nhead, n_layers, dropout, dim_feedforward_scalar,
                                  label_smoothing)
     model.to(device)
@@ -188,7 +202,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
     no_improvement_epochs = 0
     try:
         for epoch in range(1, num_epochs + 1):
-            epoch_training_loss = train_epoch(model, train_loader, optimizer, scheduler, ACCUMULATION_STEPS_DIFFUSION, device)
+            epoch_training_loss = train_epoch(model, vocab_size, train_loader, optimizer, scheduler, ACCUMULATION_STEPS_DIFFUSION, device)
             epoch_valid_loss = eval_model(model, valid_loader, device)
             print(f"Epoch {epoch} | Training loss: {epoch_training_loss} | Valid loss: {epoch_valid_loss}", flush=True)
 
@@ -230,33 +244,10 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
     return best_valid_loss
 
 def hyperparameter_tuning_objective_l1(trial, tokenizer, num_epochs, train_dataset, valid_dataset, device):
-    n_layers = trial.suggest_int("n_layers", 4, 12)
-    d_key_value = trial.suggest_categorical("d_key_value", [32, 64, 128])
-    nhead = trial.suggest_categorical("nhead", [4, 8, 12])
-    dim_feedforward_scalar = trial.suggest_int("dim_feedforward_scalar", 2, 4)
-    lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
-
-    # These two hyperparameters make up the d_model.
-    # If it's too high, my training will crash!
-    if (nhead * d_key_value) > 768:
-        raise optuna.exceptions.TrialPruned()
-
-    validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, num_epochs,
-                                       n_layers=n_layers, d_key_value=d_key_value, nhead=nhead, dim_feedforward_scalar=dim_feedforward_scalar, lr=lr,
-                                       trial=trial)
-    return validation_loss
+    pass
 
 def hyperparameter_tuning_objective_l2(trial, tokenizer, num_epochs, train_dataset, valid_dataset, device):
-    warmup_pct_start = trial.suggest_float("warmup_pct_start", 0.05, 0.3)
-    dropout = trial.suggest_float("dropout", 0.05, 0.4)
-    weight_decay = trial.suggest_float("weight_decay", 1e-4, 0.3, log=True)
-    label_smoothing = trial.suggest_float("label_smoothing", 0.0, 0.2)
-
-    validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, num_epochs,
-                                       n_layers=6, d_key_value=64, nhead=6, dim_feedforward_scalar=4, lr=5e-4, 
-                                       warmup_pct_start=warmup_pct_start, dropout=dropout, weight_decay=weight_decay, label_smoothing=label_smoothing,
-                                       trial=trial)
-    return validation_loss
+    pass
 
 if __name__ == "__main__":
     device = get_device()
