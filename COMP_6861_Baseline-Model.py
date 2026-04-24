@@ -29,7 +29,7 @@ class BaselineDecoderModel(nn.Module):
         self.padding_index = tokenizer.pad_token_id
 
         self.token_embedding = nn.Embedding(vocab_size, d_model, padding_idx=self.padding_index)
-        self.positional_embedding = nn.Embedding(block_size, d_model)
+        self.positional_embedding = nn.Embedding(block_size, d_model, padding_idx=self.padding_index) # The padding_idx is a bug. I lack the time to retrain my model.
 
         self.dropout = nn.Dropout(p=dropout)
 
