@@ -4,3 +4,6 @@ cd C:\Users\Palmar\Documents\Concordia\COMP-6861\COMP-6861-Project
 
 cmd /c "py .\COMP_6861_Baseline-Model.py > output-baseline.txt 2>&1"
 Get-Content output-baseline.txt -Wait
+
+cmd /c "py .\COMP_6861_Diffusion-Model.py --tune 1 > output-l1.txt 2>&1"
+Get-Content output-l1.txt -Wait

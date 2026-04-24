@@ -29,7 +29,7 @@ class BaselineDecoderModel(nn.Module):
         self.padding_index = tokenizer.pad_token_id
 
         self.token_embedding = nn.Embedding(vocab_size, d_model, padding_idx=self.padding_index)
-        self.positional_embedding = nn.Embedding(block_size, d_model, padding_idx=self.padding_index) # The padding_idx is a bug. I lack the time to retrain my model.
+        self.positional_embedding = nn.Embedding(block_size, d_model)
 
         self.dropout = nn.Dropout(p=dropout)
 
@@ -115,11 +115,7 @@ def train_epoch(model, dataloader, optimizer, scheduler, accumulation_steps, dev
     return total_loss / len(dataloader)
 
 @torch.no_grad()
-def eval_model(
-    model,
-    dataloader,
-    device
-):
+def eval_model(model, dataloader, device):
     model.eval()
     total_loss = 0.0
 
