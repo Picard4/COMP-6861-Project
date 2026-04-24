@@ -108,12 +108,9 @@ def train_epoch(model, dataloader, optimizer, scheduler, accumulation_steps, dev
 
         total_loss += loss.detach().item()
 
-        # Sleep every 10 batches to (hopefully) avoid microwaving my laptop
-        if (i + 1) % 10 == 0:
-            time.sleep(0.1)
-            # To ensure that training is still working...
-            if (i + 1) % 500 == 0:
-                print(f"Batch {i+1}/{len(dataloader)}...", file=sys.stderr, flush=True)
+        # To ensure that training is still working...
+        if (i + 1) % 1000 == 0:
+            print(f"Batch {i+1}/{len(dataloader)}...", file=sys.stderr, flush=True)
 
     return total_loss / len(dataloader)
 

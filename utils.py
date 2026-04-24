@@ -135,4 +135,4 @@ class WikitextDataset(Dataset):
             return chunk, target
         if self.mode == DIFFUSION_MODE_INDICATOR:
             # The goal in a diffusion model is to remove noise to form the chunk, so the chunk is our target!
-            return chunk
+            return chunk, chunk

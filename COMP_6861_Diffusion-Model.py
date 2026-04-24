@@ -88,10 +88,6 @@ class DiffusionModel(nn.Module):
         positional_embeddings = self.positional_embedding(torch.arange(sequence_length, device=source_indices.device)).unsqueeze(0)
         time_information = self.time_embedding(time_steps.float().view(-1, 1) / self.max_timesteps).unsqueeze(1)
 
-        print(token_embeddings.shape, flush=True)
-        print(positional_embeddings.shape, flush=True)
-        print(time_information.shape, flush=True)
-
         x = token_embeddings + positional_embeddings
         for i, block in enumerate(self.transformer_blocks):
             # Inject the time information for each block to keep the model aware of how many steps it has.
@@ -114,20 +110,22 @@ class DiffusionModel(nn.Module):
             nn.init.zeros_(projection.weight)
             nn.init.zeros_(projection.bias)
 
-def train_epoch(model, vocab_size, dataloader, optimizer, scheduler, accumulation_steps, noise_schedule, device):
+def train_epoch(model, vocab_size, dataloader, optimizer, scheduler, accumulation_steps, noise_schedule, max_timesteps, padding_index, device):
     model.train()
     total_loss = 0.0
 
     for i, batch in enumerate(dataloader):
         x, y = batch[0].to(device), batch[1].to(device)
 
-        x = forward_noise_process(x, vocab_size, 0.5, device)
-
-        break
+        # We have batch_size sequences of block_size tokens, so the dimensionality is (batch_size, block_size)
+        # We want a different noise_ratio for each block - that way the model gets more exposure to different denoising problems.
+        time_steps = torch.randint(0, max_timesteps, (x.size(0),), device=device)
+        noise_ratios = noise_schedule[time_steps].view(-1, 1)
+        x = forward_noise_process(x, vocab_size, noise_ratios, padding_index, device)
 
         # Use mixed-precision training to save some time!
         with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16):
-            logits = model(x)
+            logits = model(x, time_steps)
 
             loss = model.criterion(
                 logits.reshape(-1, logits.size(-1)),
@@ -148,32 +146,28 @@ def train_epoch(model, vocab_size, dataloader, optimizer, scheduler, accumulatio
             optimizer.zero_grad(set_to_none=True)
 
         total_loss += loss.detach().item()
-
-        # Sleep every 10 batches to (hopefully) avoid microwaving my laptop
-        if (i + 1) % 10 == 0:
-            time.sleep(0.1)
-            # To ensure that training is still working...
-            if (i + 1) % 500 == 0:
-                print(f"Batch {i+1}/{len(dataloader)}...", file=sys.stderr, flush=True)
+        
+        # To ensure that training is still working...
+        if (i + 1) % 1000 == 0:
+            print(f"Batch {i+1}/{len(dataloader)}...", file=sys.stderr, flush=True)
 
     return total_loss / len(dataloader)
 
 @torch.no_grad()
-def eval_model(
-    model,
-    dataloader,
-    noise_schedule,
-    device
-):
+def eval_model(model, vocab_size, dataloader, noise_schedule, max_timesteps, padding_index, device):
     model.eval()
     total_loss = 0.0
 
     for i, batch in enumerate(dataloader):
         x, y = batch[0].to(device), batch[1].to(device)
 
+        time_steps = torch.randint(0, max_timesteps, (x.size(0),), device=device)
+        noise_ratios = noise_schedule[time_steps].view(-1, 1)
+        x = forward_noise_process(x, vocab_size, noise_ratios, padding_index, device)
+
         # Use mixed-precision to save some time!
         with torch.amp.autocast(device_type=device.type, dtype=torch.bfloat16):
-            logits = model(x)
+            logits = model(x, time_steps)
 
             loss = model.criterion(
                 logits.reshape(-1, logits.size(-1)),
@@ -224,7 +218,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
 
     optimizer = get_optimizer(model.parameters(), lr, weight_decay)
     scheduler = get_scheduler(optimizer, lr, num_epochs, train_loader, ACCUMULATION_STEPS_DIFFUSION, warmup_pct_start)
-    noise_schedule = get_noise_schedule(max_timesteps, noise_schedule_type)
+    noise_schedule = get_noise_schedule(max_timesteps, noise_schedule_type).to(device)
 
     # Model training
     training_losses = []
@@ -232,10 +226,11 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
     best_valid_loss = float('inf')
     no_improvement_epochs = 0
     vocab_size = len(tokenizer)
+    padding_index = tokenizer.pad_token_id
     try:
         for epoch in range(1, num_epochs + 1):
-            epoch_training_loss = train_epoch(model, vocab_size, train_loader, optimizer, scheduler, ACCUMULATION_STEPS_DIFFUSION, noise_schedule, device)
-            epoch_valid_loss = eval_model(model, valid_loader, noise_schedule, device)
+            epoch_training_loss = train_epoch(model, vocab_size, train_loader, optimizer, scheduler, ACCUMULATION_STEPS_DIFFUSION, noise_schedule, max_timesteps, padding_index, device)
+            epoch_valid_loss = eval_model(model, vocab_size, valid_loader, noise_schedule, max_timesteps, padding_index, device)
             print(f"Epoch {epoch} | Training loss: {epoch_training_loss} | Valid loss: {epoch_valid_loss}", flush=True)
 
             training_losses.append(epoch_training_loss)
@@ -257,7 +252,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
                 if trial.should_prune():
                     raise optuna.TrialPruned()
         if test_dataset:
-            test_loss = eval_model(model, test_loader, noise_schedule, device)
+            test_loss = eval_model(model, vocab_size, test_loader, noise_schedule, max_timesteps, padding_index, device)
             print(f"Final Test Loss: {test_loss}", flush=True)
             end_time = time.time()
             total_duration = end_time - start_time
