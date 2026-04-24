@@ -109,7 +109,6 @@ def train_epoch(model, dataloader, optimizer, scheduler, accumulation_steps, dev
         total_loss += loss.detach().item()
 
         # Sleep every 10 batches to (hopefully) avoid microwaving my laptop
-        # TODO: delete the sleep check if on cluster.
         if (i + 1) % 10 == 0:
             time.sleep(0.1)
             # To ensure that training is still working...
