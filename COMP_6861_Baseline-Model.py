@@ -192,6 +192,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
                 no_improvement_epochs = 0
                 if test_dataset:
                     save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"BestModel.pt")
+                    torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, BASELINE_FILE_PATH + f"Losses.pt")
             else:
                 no_improvement_epochs = no_improvement_epochs + 1
                 if no_improvement_epochs >= EARLY_STOP_EPOCHS:
@@ -199,6 +200,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
                     break
                 if test_dataset:
                     save_model_checkpoint(epoch, model, optimizer, scheduler, epoch_training_loss, best_valid_loss, BASELINE_FILE_PATH, f"Checkpoint.pt")
+                    torch.save({"training_losses": training_losses, "valid_losses": valid_losses}, BASELINE_FILE_PATH + f"Losses.pt")
             if trial is not None:
                 trial.report(epoch_valid_loss, epoch)
                 if trial.should_prune():
