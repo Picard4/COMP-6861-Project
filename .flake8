@@ -1,0 +1,11 @@
+[flake8]
+# Increase limit for modern screensDeep Learning code
+max-line-length = 100
+# Ignore E203 to stay compatible with Black's formatting
+ignore = E203, W503, E501
+exclude = 
+    .git,
+    __pycache__,
+    venv,
+    build,
+    dist
