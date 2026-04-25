@@ -43,10 +43,10 @@ BATCH_SIZE_DIFFUSION = 16
 ACCUMULATION_STEPS_DIFFUSION = EFFECTIVE_BATCH_SIZE // BATCH_SIZE_DIFFUSION
 
 # Number of epochs to allow no validation loss improvement before performing early stopping.
-EARLY_STOP_EPOCHS = 3
+EARLY_STOP_EPOCHS = 2
 
 # The main training dataset is about 1 GB. 
-# That's way too large to train in a reasonable time frame for me (one epoch on 1% takes roughly an hour to an hour + 45 minutes). Let's cut it down to 2.5%.
+# That's way too large to train in a reasonable time frame for me (one epoch on 1% takes roughly an hour to an hour + 45 minutes on my laptop). Let's cut it down to 2.5%.
 # The tokenizer was trained on the full training set - this significantly reduces the risk of <unk> tokens, though, and it's the same between all models I will train.
 # The validation and test sets are less than 1% of the training set - no need to reduce either.
 SUBSET_RATIO_OF_DATASET_TO_TRAIN = 0.025

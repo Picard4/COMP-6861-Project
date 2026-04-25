@@ -196,7 +196,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
         batch_size=BATCH_SIZE_DIFFUSION,
         shuffle=True,
         pin_memory=True,
-        num_workers=2,
+        num_workers=4,
         persistent_workers=True
     )
     valid_loader = DataLoader(
@@ -342,6 +342,6 @@ if __name__ == "__main__":
     else:
         print("Training model...", flush=True)
         test_dataset = WikitextDataset(TEST_DATA_FILE_PATH, BLOCK_SIZE_DIFFUSION, mode=DIFFUSION_MODE_INDICATOR)
-        train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, 10, 
+        train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, 20, 
                          lr=5e-4, max_timesteps=1000
                          )

@@ -36,7 +36,7 @@ class BaselineDecoderModel(nn.Module):
         self.transformer_blocks = nn.ModuleList([
             # Technically this is meant to be a decoder, but the TransformerDecoderLayer is meant to use a mask for memory and target.
             # We only need a mask for the target (there is no memory since we have no encoder), so we can optimize out some math by using encoders.
-            # Technically, this is still a decoder since it's autoregressive https://magazine.sebastianraschka.com/p/understanding-encoder-and-decoder
+            # Technically, this is still a decoder since it's autoregressive (https://magazine.sebastianraschka.com/p/understanding-encoder-and-decoder - we also learned this in Lab 6)
             nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
@@ -151,7 +151,7 @@ def train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, devi
         batch_size=BATCH_SIZE_BASELINE,
         shuffle=True,
         pin_memory=True,
-        num_workers=2,
+        num_workers=4,
         persistent_workers=True
     )
     valid_loader = DataLoader(
@@ -290,6 +290,6 @@ if __name__ == "__main__":
     else:
         print("Training model...", flush=True)
         test_dataset = WikitextDataset(TEST_DATA_FILE_PATH, BLOCK_SIZE_BASELINE, mode=BASELINE_MODE_INDICATOR)
-        train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, 10,
+        train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, 20,
                          n_layers=9, d_key_value=32, nhead=12, dim_feedforward_scalar=2, lr=1e-3,
                          warmup_pct_start=0.1, dropout=0.0662576444519992, weight_decay=0.012957079329680455, label_smoothing=0.03410482473745831)
