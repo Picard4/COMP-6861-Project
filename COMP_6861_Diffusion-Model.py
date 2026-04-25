@@ -338,7 +338,7 @@ if __name__ == "__main__":
         else:
             study.optimize(
                 lambda trial: hyperparameter_tuning_objective_l2(trial, tokenizer, num_epochs, train_dataset, valid_dataset, device), 
-                n_trials=1 # I decided to try parallel tuning on the Speed cluster. Actual number is 8.
+                n_trials=8
             )
         print(f"Best Hyperparameters: {study.best_params}", flush=True)
     else:
@@ -346,4 +346,5 @@ if __name__ == "__main__":
         test_dataset = WikitextDataset(TEST_DATA_FILE_PATH, BLOCK_SIZE_DIFFUSION, mode=DIFFUSION_MODE_INDICATOR)
         train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, 20, 
                          lr=5e-4, max_timesteps=1000,
-                         nhead=12, nhead_scalar=59, num_layers=5, time_embedding_dim=75, dim_feedforward_scalar=2, noise_schedule_type=COSINE_NOISE_SCHEDULE)
+                         nhead=12, nhead_scalar=59, num_layers=5, time_embedding_dim=75, dim_feedforward_scalar=2, noise_schedule_type=COSINE_NOISE_SCHEDULE,
+                         warmup_pct_start=0.1, dropout=0.1, weight_decay=0.05, label_smoothing=0.1)

@@ -57,15 +57,30 @@ SUBSET_RATIO_OF_DATASET_TO_TUNE = 0.2
 # Functions and classes  ----------------------------------------------------------
 
 def set_randomization_seed():
+    """
+    Automatically sets the randomization seeds. To be called right before training a model.
+    """
     random.seed(0)
     torch.manual_seed(0)
 
 def get_device():
+    """
+    Attempts to get and return a cuda device. If that fails, returns the cpu.
+
+    Returns:
+        The chosen device.
+    """
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}", flush=True)
     return device
 
 def get_tokenizer():
+    """
+    Loads the tokenizer, adds the tokens it needs to process special characters, and returns it.
+
+    Returns:
+        The tokenizer.
+    """
     tokenizer = PreTrainedTokenizerFast(tokenizer_file=TOKENIZER_FILE_PATH)
 
     # We need to ensure the tokenizer knows what the special tokens mean.
@@ -78,6 +93,9 @@ def get_tokenizer():
 
     return tokenizer
 
+"""
+Reduces the sent 
+"""
 def get_reduced_dataset(full_dataset, subset_ratio=0.01):
     subset_size = int(len(full_dataset) * subset_ratio)
     indices = np.arange(len(full_dataset))
