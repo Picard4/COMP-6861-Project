@@ -300,7 +300,7 @@ def hyperparameter_tuning_objective_l2(trial, tokenizer, num_epochs, train_datas
 
     validation_loss = train_full_model(tokenizer, train_dataset, valid_dataset, None, device, num_epochs,
                                        lr=5e-4, max_timesteps=1000,
-                                       nhead=6, nhead_scalar=48, num_layers=6, time_embedding_dim=96, dim_feedforward_scalar=4, noise_schedule_type=COSINE_NOISE_SCHEDULE,
+                                       nhead=12, nhead_scalar=59, num_layers=5, time_embedding_dim=75, dim_feedforward_scalar=2, noise_schedule_type=COSINE_NOISE_SCHEDULE,
                                        warmup_pct_start=warmup_pct_start, dropout=dropout, weight_decay=weight_decay, label_smoothing=label_smoothing,
                                        trial=trial)
     return validation_loss
@@ -345,5 +345,5 @@ if __name__ == "__main__":
         print("Training model...", flush=True)
         test_dataset = WikitextDataset(TEST_DATA_FILE_PATH, BLOCK_SIZE_DIFFUSION, mode=DIFFUSION_MODE_INDICATOR)
         train_full_model(tokenizer, train_dataset, valid_dataset, test_dataset, device, 20, 
-                         lr=5e-4, max_timesteps=1000
-                         )
+                         lr=5e-4, max_timesteps=1000,
+                         nhead=12, nhead_scalar=59, num_layers=5, time_embedding_dim=75, dim_feedforward_scalar=2, noise_schedule_type=COSINE_NOISE_SCHEDULE)
