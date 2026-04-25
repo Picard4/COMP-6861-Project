@@ -2,7 +2,7 @@ Python 3.12.9
 
 To access venv:
 cd C:\Users\Palmar\Documents\Concordia\COMP-6861\COMP-6861-Project
-& c:\Users\Palmar\Documents\Concordia\COMP-6861\COMP-6861-Project\.venv\Scripts\Activate.ps1
+& c:\Users\Palmar\Documents\Concordia\COMP-6861\COMP-6861-Project\venv\Scripts\Activate.ps1
 
 cmd /c "py .\COMP_6861_Baseline-Model.py > output-baseline.txt 2>&1"
 Get-Content output-baseline.txt -Wait
