@@ -253,8 +253,9 @@ class WikitextDataset(Dataset):
             return chunk, chunk
         if self.mode == HYBRID_MODE_INDICATOR:
             # The hybrid model will generate half the tokens indicated by the block size, then denoise them.
+            # As such, we want to focus on evaluating the generated tokens only.
             half_block_size = self.block_size // 2
             target = self.data[
-                index + half_block_size : index + self.block_size + half_block_size
+                index + self.block_size : index + self.block_size + half_block_size
             ]
             return chunk, target
