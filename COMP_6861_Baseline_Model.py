@@ -235,9 +235,6 @@ def eval_model(model, dataloader, device):
     return total_loss / len(dataloader)
 
 
-# This is the main code. Sets up the baseline model.
-# Datasets are assumed to use the same block_size as the datasets that are sent in.
-# Send in None for the test_dataset to indicate that this training is for hyperparameter tuning.
 def train_full_model(
     tokenizer,
     train_dataset,
@@ -249,13 +246,13 @@ def train_full_model(
     d_key_value=64,
     nhead=6,
     dim_feedforward_scalar=4,
-    lr=5e-4,  # L1 Hyperparameters
+    lr=5e-4,
     warmup_pct_start=0.1,
     dropout=0.1,
     weight_decay=0.01,
-    label_smoothing=0.1,  # L2 Hyperparameters
+    label_smoothing=0.1,
     trial=None,
-):  # The trial for tuning.
+):
     """
     Trains a full autoregressive model, from start to end, saving the model's progress to external files along the way.
 

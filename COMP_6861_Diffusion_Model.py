@@ -347,19 +347,19 @@ def train_full_model(
     device,
     num_epochs=10,
     lr=5e-4,
-    max_timesteps=1000,  # Hyperparameters that will not be in the search
+    max_timesteps=1000,
     nhead=6,
     nhead_scalar=48,
     num_layers=6,
-    time_embedding_dim=96,  # L1 Hyperparameters
+    time_embedding_dim=96,
     dim_feedforward_scalar=4,
-    noise_schedule_type=COSINE_NOISE_SCHEDULE,  # L1 Hyperparameters
+    noise_schedule_type=COSINE_NOISE_SCHEDULE,
     warmup_pct_start=0.1,
     dropout=0.1,
     weight_decay=0.05,
-    label_smoothing=0.1,  # L2 Hyperparameters (if time allows)
+    label_smoothing=0.1,
     trial=None,
-):  # The trial for tuning.
+):
     """
     Trains a full diffusion model, from start to end, saving the model's progress to external files along the way.
 
