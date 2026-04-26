@@ -17,6 +17,7 @@ DIFFUSION_FILE_PATH = DATA_FILE_PATH + "diffusion-models/"
 # Dataset constants ----------------------------------------------------------
 BASELINE_MODE_INDICATOR = "baseline"
 DIFFUSION_MODE_INDICATOR = "diffusion"
+HYBRID_MODE_INDICATOR = "hybrid"
 
 # Constants that must remain the same between models ----------------------------------------------------------
 
@@ -250,3 +251,10 @@ class WikitextDataset(Dataset):
         if self.mode == DIFFUSION_MODE_INDICATOR:
             # The goal in a diffusion model is to remove noise to form the chunk, so the chunk is our target!
             return chunk, chunk
+        if self.mode == HYBRID_MODE_INDICATOR:
+            # The hybrid model will generate half the tokens indicated by the block size, then denoise them.
+            half_block_size = self.block_size // 2
+            target = self.data[
+                index + half_block_size : index + self.block_size + half_block_size
+            ]
+            return chunk, target
